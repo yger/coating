@@ -17,12 +17,16 @@ coating = {'mea_1' : {'channels' : [ 0,  1,  2,  3,  5,  6,  8, 10, 12, 14, 16, 
             }
 
 mcs_mapping = h5py.File('MEA3.h5')['Data/Recording_0/AnalogStream/Stream_2/InfoChannel']['Label'].astype('int')
+mcs_factor = h5py.File('MEA3.h5')['Data/Recording_0/AnalogStream/Stream_2/InfoChannel']['ConversionFactor'][0] * 1e-6
 
 all_channels = np.delete(np.arange(60), [14, 44])
 
 from circus.shared.parser import CircusParser
 from circus.shared.files import load_data
 from circus.shared.probes import get_nodes_and_edges
+
+unwhiten = False
+
 
 for key in ['mea_1', 'mea_2', 'mea_3']:
 
@@ -31,8 +35,12 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
     params.get_data_file()
 
     mads = load_data(params, 'mads')
-    whitening = np.linalg.inv(load_data(params, 'spatial_whitening'))
+    whitening = mcs_factor*np.linalg.inv(load_data(params, 'spatial_whitening'))
     thresholds = load_data(params, 'thresholds')
+
+    if unwhiten:
+        mads = whitening.dot(mads)
+        thresholds = whitening.dot(thresholds)
 
     coated_channels = []
     for i in mapping[coating[key]['channels'],1]:
@@ -86,9 +94,9 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
     for a in inv_nodes[non_coated_channels]:
         non_coated_snrs = np.concatenate((non_coated_snrs, [-res['amplitudes']['elec_%d' %a].min()/mads[a]]))
 
-    ax[0, 1].violinplot([coated_snrs], [0], showmeans=True)
-    ax[0, 1].violinplot([non_coated_snrs], [1], showmeans=True)
-    ax[0, 1].set_ylabel('SNR')
+    ax[0, 1].violinplot(20*np.log10(coated_snrs), [0], showmeans=True)
+    ax[0, 1].violinplot(20*np.log10(non_coated_snrs), [1], showmeans=True)
+    ax[0, 1].set_ylabel('SNR (dB)')
     ax[0, 1].spines['top'].set_visible(False)
     ax[0, 1].spines['right'].set_visible(False)
     ax[0, 1].set_xticks([])
@@ -110,25 +118,40 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
     ax[0, 2].plot([-1, -1], [ymin, ymax], 'k--')
 
     electrodes = load_data(params, 'electrodes')
-    ax[2, 2].bar([0], [len(np.intersect1d(electrodes, coated_channels))])
-    ax[2, 2].bar([1], [len(np.intersect1d(electrodes, non_coated_channels))])
-    ax[2, 2].set_ylabel('Cells detected')
-    ax[2, 2].spines['top'].set_visible(False)
-    ax[2, 2].spines['right'].set_visible(False)
-    ax[2, 2].set_xticks([])
+    # ax[2, 2].bar([0], [len(np.intersect1d(electrodes, coated_channels))])
+    # ax[2, 2].bar([1], [len(np.intersect1d(electrodes, non_coated_channels))])
+    # ax[2, 2].set_ylabel('Cells detected')
+    # ax[2, 2].spines['top'].set_visible(False)
+    # ax[2, 2].spines['right'].set_visible(False)
+    # ax[2, 2].set_xticks([])
+
+    sorted_indices = np.concatenate((inv_nodes[coated_channels], inv_nodes[non_coated_channels]))
+    w = load_data(params, 'spatial_whitening')
+    im = ax[2, 2].imshow(w[sorted_indices][:, sorted_indices])
+    plt.plot([len(coated_channels), len(coated_channels)], [0, len(coated_channels)], 'r--')
+    plt.plot([0, len(coated_channels)], [len(coated_channels), len(coated_channels)], 'r--')
+
+    plt.colorbar(im)
 
     templates = load_data(params, 'templates')
     nb_templates = templates.shape[1]//2
     templates = templates[:,:nb_templates].toarray()
     templates = templates.reshape(58, 31, nb_templates)
 
+    if unwhiten:
+        templates = np.tensordot(whitening, templates, axes=[0, 0])
+
     from circus.shared.probes import *
     nodes, positions = get_nodes_and_positions(params)
 
+
     norms = numpy.linalg.norm(templates, axis=1)
-    ax[1, 0].violinplot(norms[inv_nodes[coated_channels]].flatten(), [0], showmeans=True)
-    ax[1, 0].violinplot(norms[inv_nodes[non_coated_channels]].flatten(), [1], showmeans=True)
+    mask = norms != 0
+
+    ax[1, 0].violinplot(norms[inv_nodes[coated_channels],:][mask[inv_nodes[coated_channels]]], [0], showmeans=True)
+    ax[1, 0].violinplot(norms[inv_nodes[non_coated_channels],:][mask[inv_nodes[non_coated_channels]]], [1], showmeans=True)
     ax[1, 0].set_ylabel('Energy of templates')
+    ax[1, 0].set_yscale('log')
     ax[1, 0].spines['top'].set_visible(False)
     ax[1, 0].spines['right'].set_visible(False)
     ax[1, 0].set_xticks([])
@@ -150,7 +173,7 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
 
     # import sklearn.metrics.pairwise
     # distances_coated = sklearn.metrics.pairwise.distance.cdist(coms.T, positions[inv_nodes[coated_channels],:2])
-    # distances_non_coated = sklearn.metrics.pairwise.distance.cdist(coms.T, positions[inv_nodes[non_coated_channels],:2])
+    # distances_non_coated = sklearn.metricfs.pairwise.distance.cdist(coms.T, positions[inv_nodes[non_coated_channels],:2])
 
     # gmax = min(distances_coated.max(), distances_non_coated.max())
     # bins = np.linspace(0, gmax, 20)
@@ -179,7 +202,7 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
         colorVal = scalarMap.to_rgba(purity[count])
         ax[2, 1].scatter(spikes/params.data_file.sampling_rate, count*np.ones(len(spikes)), color=colorVal)
     ax[2, 1].set_xlabel('time (s)')
-    ax[2, 1]
+    ax[2, 1].set_xlim(50, 80)
 
 
     ax[2, 1].spines['top'].set_visible(False)
@@ -205,10 +228,10 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
     ax[1, 2].set_ylim(ymin, ymax)
     ax[1, 1].set_xlabel('timesteps')
     ax[1, 2].set_xlabel('timesteps')
-    ax[1, 1].set_ylabel('amplitude')
-    ax[1, 2].set_ylabel('amplitude')
+    ax[1, 1].set_ylabel('normalized amplitude')
+    ax[1, 2].set_ylabel('normalized amplitude')
 
     plt.savefig(key + '.pdf')
     plt.tight_layout()
-    plt.show()
-    #plt.close()
+    #plt.show()
+    plt.close()
