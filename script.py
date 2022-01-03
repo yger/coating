@@ -134,10 +134,16 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
     for a in inv_nodes[coated_channels]:
         coated_snrs = np.concatenate((coated_snrs, [-res['amplitudes']['elec_%d' %a].min()/mads[a]]))
         
+    if unwhiten:
+        coated_snrs *= mcs_factor
+
     non_coated_snrs = np.zeros(0, dtype=np.float32)
 
     for a in inv_nodes[non_coated_channels]:
         non_coated_snrs = np.concatenate((non_coated_snrs, [-res['amplitudes']['elec_%d' %a].min()/mads[a]]))
+
+    if unwhiten:
+        non_coated_snrs *= mcs_factor
 
     ax[0, 1].violinplot(20*np.log10(coated_snrs), [0], showmeans=True)
     ax[0, 1].violinplot(20*np.log10(non_coated_snrs), [1], showmeans=True)
@@ -203,8 +209,14 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
         ax[1, 0].set_xticks([])
 
 
-        coms = np.dot(positions[:,:2].T, np.abs(templates[:,15, :]))/np.abs(templates[:,15,:]).sum(0)
-        peaks = np.min(templates[:, 15, :], 0)
+        coms = np.zeros((2, 0))
+        for idx in range(templates.shape[2]):
+            wf = templates[:,:,idx].T
+            wf_ptp = wf.ptp(axis=0)
+            com = np.sum(wf_ptp[:, np.newaxis] * positions[:,:2], axis=0) / np.sum(wf_ptp)
+            coms = np.hstack((coms, com[:,np.newaxis]))
+
+        #coms = np.dot(positions[:,:2].T, np.abs(templates[:,15, :]))/np.abs(templates[:,15,:]).sum(0)
 
         ax[2, 0].scatter(positions[inv_nodes[coated_channels], 0], positions[inv_nodes[coated_channels], 1], c='C0')
         ax[2, 0].scatter(positions[inv_nodes[non_coated_channels], 0], positions[inv_nodes[non_coated_channels], 1], c='C1')
