@@ -25,8 +25,9 @@ from circus.shared.parser import CircusParser
 from circus.shared.files import load_data
 from circus.shared.probes import get_nodes_and_edges
 
-unwhiten = True
+unwhiten = False
 save_pdf = True
+use_monopole = True
 
 def make_initial_guess_and_bounds(wf_ptp, local_contact_locations, max_distance_um=250):
     # constant for initial guess and bounds
@@ -208,19 +209,32 @@ for key in ['mea_1', 'mea_2', 'mea_3']:
         ax[1, 0].spines['right'].set_visible(False)
         ax[1, 0].set_xticks([])
 
+        import scipy
+
+        def estimate_distance_error(vec, wf_ptp, local_contact_locations):
+            # vec dims ar (x, y, z amplitude_factor)
+            # given that for contact_location x=dim0 + z=dim1 and y is orthogonal to probe
+            dist = np.sqrt(((local_contact_locations - vec[np.newaxis, :2])**2).sum(axis=1) + vec[2]**2)
+            ptp_estimated = vec[3] / dist
+            err = wf_ptp - ptp_estimated
+            return err
 
         coms = np.zeros((2, 0))
         for idx in range(templates.shape[2]):
             wf = templates[:,:,idx].T
             wf_ptp = wf.ptp(axis=0)
-            com = np.sum(wf_ptp[:, np.newaxis] * positions[:,:2], axis=0) / np.sum(wf_ptp)
-            coms = np.hstack((coms, com[:,np.newaxis]))
 
-        #coms = np.dot(positions[:,:2].T, np.abs(templates[:,15, :]))/np.abs(templates[:,15,:]).sum(0)
+            if use_monopole:
+                x0, bounds = make_initial_guess_and_bounds(wf_ptp, positions[:,:2], 1000)
+                args = (wf_ptp, positions[:,:2])
+                com = scipy.optimize.least_squares(estimate_distance_error, x0=x0, bounds=bounds, args = args)
+            else:
+                com = np.sum(wf_ptp[:, np.newaxis] * positions[:,:2], axis=0) / np.sum(wf_ptp)
+            coms = np.hstack((coms, com.x[:2,np.newaxis]))
 
         ax[2, 0].scatter(positions[inv_nodes[coated_channels], 0], positions[inv_nodes[coated_channels], 1], c='C0')
         ax[2, 0].scatter(positions[inv_nodes[non_coated_channels], 0], positions[inv_nodes[non_coated_channels], 1], c='C1')
-        ax[2, 0].scatter(coms[0], coms[1], c='k')
+        ax[2, 0].scatter(coms[0], coms[1], c='k', alpha=0.5)
         ax[2, 0].spines['top'].set_visible(False)
         ax[2, 0].spines['right'].set_visible(False)
         ax[2, 0].spines['left'].set_visible(False)
